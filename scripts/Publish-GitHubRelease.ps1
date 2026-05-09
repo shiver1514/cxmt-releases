@@ -31,6 +31,38 @@ function Resolve-FullPath {
     $executionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
 }
 
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $OperationName,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock] $ScriptBlock,
+
+        [ValidateRange(1, 10)]
+        [int] $MaxAttempts = 4,
+
+        [ValidateRange(0, 300)]
+        [int] $DelaySeconds = 5
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            return & $ScriptBlock
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                throw
+            }
+
+            Write-Warning ("{0} failed on attempt {1}/{2}: {3}" -f $OperationName, $attempt, $MaxAttempts, $_.Exception.Message)
+            if ($DelaySeconds -gt 0) {
+                Start-Sleep -Seconds $DelaySeconds
+            }
+        }
+    }
+}
+
 function Invoke-GitHubApi {
     param(
         [Parameter(Mandatory = $true)][ValidateSet("Get", "Post", "Delete")]
@@ -55,7 +87,9 @@ function Invoke-GitHubApi {
         $params.ContentType = "application/json"
     }
 
-    Invoke-RestMethod @params
+    Invoke-WithRetry -OperationName "$Method $Uri" -ScriptBlock {
+        Invoke-RestMethod @params
+    }
 }
 
 function New-TarArchive {
@@ -258,7 +292,9 @@ foreach ($assetPath in $assetPaths) {
     $uploadUri = "https://uploads.github.com/repos/$Owner/$Repo/releases/$($release.id)/assets?name=$escapedName"
 
     Write-Host "Uploading $($asset.Name) ($([Math]::Round($asset.Length / 1MB, 2)) MiB)"
-    Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers -ContentType "application/octet-stream" -InFile $asset.FullName | Out-Null
+    Invoke-WithRetry -OperationName "Upload $($asset.Name)" -ScriptBlock {
+        Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers -ContentType "application/octet-stream" -InFile $asset.FullName
+    } | Out-Null
 }
 
 Write-Host ""
