@@ -1,0 +1,17 @@
+payload/*
+!payload/.gitkeep
+
+release-artifacts/*
+!release-artifacts/.gitkeep
+
+*.tar
+*.tar.part*
+*.zip
+*.7z
+*.rar
+*.iso
+*.exe
+*.msi
+*.msix
+*.appx
+*.appxbundle
