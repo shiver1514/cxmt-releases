@@ -50,6 +50,9 @@ function Assert-Equal {
 $scriptPath = Join-Path $PSScriptRoot "Publish-GitHubRelease.ps1"
 Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Invoke-WithRetry"
 Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Get-UploadProgressPercent"
+Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "ConvertTo-SafeAssetNamePart"
+Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Get-ArchiveBaseName"
+Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Get-ManifestFileName"
 
 $attempts = 0
 $result = Invoke-WithRetry -OperationName "flaky operation" -MaxAttempts 3 -DelaySeconds 0 -ScriptBlock {
@@ -86,5 +89,11 @@ Assert-Equal -Expected 0 -Actual (Get-UploadProgressPercent -UploadedBytes 0 -To
 Assert-Equal -Expected 50 -Actual (Get-UploadProgressPercent -UploadedBytes 50 -TotalBytes 100) -Message "Half uploaded should report 50 percent."
 Assert-Equal -Expected 100 -Actual (Get-UploadProgressPercent -UploadedBytes 100 -TotalBytes 100) -Message "Complete uploads should report 100 percent."
 Assert-Equal -Expected 100 -Actual (Get-UploadProgressPercent -UploadedBytes 120 -TotalBytes 100) -Message "Progress should be capped at 100 percent."
+
+Assert-Equal -Expected "cxmt-releases-temp-20260509-131032" -Actual (Get-ArchiveBaseName -Repo "cxmt-releases" -Tag "temp-20260509-131032") -Message "Default archive base name should stay compatible."
+Assert-Equal -Expected "cxmt-releases-temp-20260509-131032-aidi" -Actual (Get-ArchiveBaseName -Repo "cxmt-releases" -Tag "temp-20260509-131032" -ArchiveLabel "aidi") -Message "Archive labels should create distinct asset names."
+Assert-Equal -Expected "cxmt-releases-temp-20260509-131032-aidi-tools" -Actual (Get-ArchiveBaseName -Repo "cxmt-releases" -Tag "temp-20260509-131032" -ArchiveLabel "aidi tools") -Message "Archive labels should be sanitized for asset names."
+Assert-Equal -Expected "manifest.json" -Actual (Get-ManifestFileName) -Message "Default manifest name should stay compatible."
+Assert-Equal -Expected "manifest-aidi.json" -Actual (Get-ManifestFileName -ArchiveLabel "aidi") -Message "Archive labels should create distinct manifest names."
 
 Write-Host "Publish-GitHubRelease retry tests passed."

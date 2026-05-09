@@ -45,6 +45,25 @@ Public download URL pattern:
 https://github.com/shiver1514/cxmt-releases/releases
 ```
 
+## Add another folder to an existing release
+
+Use the existing release tag, a source folder that contains only the new files,
+and a unique archive label:
+
+```powershell
+.\scripts\Publish-GitHubRelease.ps1 -Owner shiver1514 -Repo cxmt-releases -Tag temp-20260509-131032 -SourcePath ".\payload\aidi" -ArchiveLabel aidi
+```
+
+This creates additional assets such as:
+
+```text
+cxmt-releases-temp-20260509-131032-aidi.tar.part001
+manifest-aidi.json
+```
+
+Existing assets with different names stay in the release. If you reuse the same
+`-ArchiveLabel`, assets with that same label are replaced.
+
 ## Restore later
 
 Download all `.partNNN` files and `manifest.json` from the release, then run:

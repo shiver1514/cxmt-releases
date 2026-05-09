@@ -12,6 +12,8 @@ param(
 
     [string] $ReleaseName,
 
+    [string] $ArchiveLabel,
+
     [string] $SourcePath = (Join-Path $PSScriptRoot "..\payload"),
 
     [string] $ArtifactsPath = (Join-Path $PSScriptRoot "..\release-artifacts"),
@@ -86,6 +88,67 @@ function Get-UploadProgressPercent {
     }
 
     return $percent
+}
+
+function ConvertTo-SafeAssetNamePart {
+    param(
+        [AllowNull()]
+        [string] $Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return ""
+    }
+
+    $safeValue = $Value.Trim() -replace '[^A-Za-z0-9_.-]+', '-'
+    $safeValue = $safeValue -replace '-+', '-'
+    return $safeValue.Trim([char[]] ".-")
+}
+
+function Get-ArchiveBaseName {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Repo,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Tag,
+
+        [AllowEmptyString()]
+        [string] $ArchiveLabel
+    )
+
+    $safeRepo = ConvertTo-SafeAssetNamePart $Repo
+    $safeTag = ConvertTo-SafeAssetNamePart $Tag
+    $archiveBaseName = "$safeRepo-$safeTag"
+    $safeLabel = ConvertTo-SafeAssetNamePart $ArchiveLabel
+
+    if ((-not [string]::IsNullOrWhiteSpace($ArchiveLabel)) -and [string]::IsNullOrWhiteSpace($safeLabel)) {
+        throw "ArchiveLabel '$ArchiveLabel' does not contain usable asset-name characters. Use letters, numbers, dots, underscores, or hyphens."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($safeLabel)) {
+        $archiveBaseName = "$archiveBaseName-$safeLabel"
+    }
+
+    return $archiveBaseName
+}
+
+function Get-ManifestFileName {
+    param(
+        [AllowEmptyString()]
+        [string] $ArchiveLabel
+    )
+
+    $safeLabel = ConvertTo-SafeAssetNamePart $ArchiveLabel
+    if ((-not [string]::IsNullOrWhiteSpace($ArchiveLabel)) -and [string]::IsNullOrWhiteSpace($safeLabel)) {
+        throw "ArchiveLabel '$ArchiveLabel' does not contain usable asset-name characters. Use letters, numbers, dots, underscores, or hyphens."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($safeLabel)) {
+        return "manifest.json"
+    }
+
+    return "manifest-$safeLabel.json"
 }
 
 function Invoke-GitHubApi {
@@ -352,8 +415,8 @@ if ($payloadFiles.Count -eq 0) {
 
 New-Item -ItemType Directory -Force -Path $releaseArtifactsPath | Out-Null
 
-$safeRepo = $Repo -replace '[^A-Za-z0-9_.-]', '-'
-$archivePath = Join-Path $releaseArtifactsPath "$safeRepo-$Tag.tar"
+$archiveBaseName = Get-ArchiveBaseName -Repo $Repo -Tag $Tag -ArchiveLabel $ArchiveLabel
+$archivePath = Join-Path $releaseArtifactsPath "$archiveBaseName.tar"
 $chunkSizeBytes = [int64] $ChunkSizeMB * 1MB
 
 Write-Host "Creating tar archive from: $sourceFullPath"
@@ -366,11 +429,12 @@ if (($assetPaths.Count -gt 1) -and (-not $KeepArchive)) {
     Remove-Item -LiteralPath $archivePath -Force
 }
 
-$manifestPath = Join-Path $releaseArtifactsPath "manifest.json"
+$manifestPath = Join-Path $releaseArtifactsPath (Get-ManifestFileName -ArchiveLabel $ArchiveLabel)
 $manifest = [ordered] @{
     owner = $Owner
     repo = $Repo
     tag = $Tag
+    archiveLabel = $ArchiveLabel
     createdAt = (Get-Date).ToString("o")
     sourcePath = $sourceFullPath
     chunkSizeMB = $ChunkSizeMB
