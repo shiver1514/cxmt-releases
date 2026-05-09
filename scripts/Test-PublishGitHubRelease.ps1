@@ -53,6 +53,7 @@ Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Get-UploadProgressP
 Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "ConvertTo-SafeAssetNamePart"
 Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Get-ArchiveBaseName"
 Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Get-ManifestFileName"
+Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Get-AssetUploadDecision"
 
 $attempts = 0
 $result = Invoke-WithRetry -OperationName "flaky operation" -MaxAttempts 3 -DelaySeconds 0 -ScriptBlock {
@@ -95,5 +96,11 @@ Assert-Equal -Expected "cxmt-releases-temp-20260509-131032-aidi" -Actual (Get-Ar
 Assert-Equal -Expected "cxmt-releases-temp-20260509-131032-aidi-tools" -Actual (Get-ArchiveBaseName -Repo "cxmt-releases" -Tag "temp-20260509-131032" -ArchiveLabel "aidi tools") -Message "Archive labels should be sanitized for asset names."
 Assert-Equal -Expected "manifest.json" -Actual (Get-ManifestFileName) -Message "Default manifest name should stay compatible."
 Assert-Equal -Expected "manifest-aidi.json" -Actual (Get-ManifestFileName -ArchiveLabel "aidi") -Message "Archive labels should create distinct manifest names."
+
+$matchingAsset = [pscustomobject] @{ name = "asset.bin"; size = 100; id = 123 }
+$differentAsset = [pscustomobject] @{ name = "asset.bin"; size = 99; id = 123 }
+Assert-Equal -Expected "Upload" -Actual (Get-AssetUploadDecision -ExistingAsset $null -LocalSize 100) -Message "Missing assets should be uploaded."
+Assert-Equal -Expected "Skip" -Actual (Get-AssetUploadDecision -ExistingAsset $matchingAsset -LocalSize 100) -Message "Matching existing assets should be skipped."
+Assert-Equal -Expected "Replace" -Actual (Get-AssetUploadDecision -ExistingAsset $differentAsset -LocalSize 100) -Message "Mismatched existing assets should be replaced."
 
 Write-Host "Publish-GitHubRelease retry tests passed."

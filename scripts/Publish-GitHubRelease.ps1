@@ -151,6 +151,44 @@ function Get-ManifestFileName {
     return "manifest-$safeLabel.json"
 }
 
+function Find-ReleaseAsset {
+    param(
+        [Parameter(Mandatory = $true)] $Release,
+        [Parameter(Mandatory = $true)][string] $AssetName
+    )
+
+    if (-not ($Release.PSObject.Properties.Name -contains "assets")) {
+        return $null
+    }
+
+    foreach ($asset in @($Release.assets)) {
+        if ($asset.name -eq $AssetName) {
+            return $asset
+        }
+    }
+
+    return $null
+}
+
+function Get-AssetUploadDecision {
+    param(
+        [AllowNull()] $ExistingAsset,
+
+        [Parameter(Mandatory = $true)]
+        [int64] $LocalSize
+    )
+
+    if ($null -eq $ExistingAsset) {
+        return "Upload"
+    }
+
+    if ([int64] $ExistingAsset.size -eq $LocalSize) {
+        return "Skip"
+    }
+
+    return "Replace"
+}
+
 function Invoke-GitHubApi {
     param(
         [Parameter(Mandatory = $true)][ValidateSet("Get", "Post", "Delete")]
@@ -497,18 +535,36 @@ catch {
 for ($assetIndex = 0; $assetIndex -lt $assetPaths.Count; $assetIndex++) {
     $assetPath = $assetPaths[$assetIndex]
     $asset = Get-Item -LiteralPath $assetPath
-    Remove-ExistingAsset -Release $release -AssetName $asset.Name -ApiBase $apiBase -Headers $headers
 
     $escapedName = [Uri]::EscapeDataString($asset.Name)
     $uploadUri = "https://uploads.github.com/repos/$Owner/$Repo/releases/$($release.id)/assets?name=$escapedName"
 
     $assetNumber = $assetIndex + 1
     $activity = "Uploading asset $assetNumber of $($assetPaths.Count): $($asset.Name)"
-    Write-Host "$activity ($([Math]::Round($asset.Length / 1MB, 2)) MiB)"
-    Invoke-WithRetry -OperationName "Upload $($asset.Name)" -ScriptBlock {
+
+    $uploadResult = Invoke-WithRetry -OperationName "Upload $($asset.Name)" -ScriptBlock {
+        $currentRelease = Invoke-GitHubApi -Method Get -Uri "$apiBase/releases/tags/$Tag" -Headers $headers
+        $existingAsset = Find-ReleaseAsset -Release $currentRelease -AssetName $asset.Name
+        $decision = Get-AssetUploadDecision -ExistingAsset $existingAsset -LocalSize $asset.Length
+
+        if ($decision -eq "Skip") {
+            Write-Host "Skipping existing $($asset.Name) ($([Math]::Round($asset.Length / 1MB, 2)) MiB)"
+            return [pscustomobject] @{ skipped = $true }
+        }
+
+        if ($decision -eq "Replace") {
+            Write-Host "Deleting existing asset with different size: $($asset.Name)"
+            Invoke-GitHubApi -Method Delete -Uri "$apiBase/releases/assets/$($existingAsset.id)" -Headers $headers | Out-Null
+        }
+
+        Write-Host "$activity ($([Math]::Round($asset.Length / 1MB, 2)) MiB)"
         Invoke-GitHubAssetUpload -Uri $uploadUri -Headers $headers -FilePath $asset.FullName -Activity $activity -ProgressId 1
-    } | Out-Null
-    Write-Host "Uploaded $($asset.Name)"
+        return [pscustomobject] @{ skipped = $false }
+    }
+
+    if (-not ($uploadResult.PSObject.Properties.Name -contains "skipped") -or -not $uploadResult.skipped) {
+        Write-Host "Uploaded $($asset.Name)"
+    }
 }
 
 Write-Host ""

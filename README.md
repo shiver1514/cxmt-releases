@@ -62,7 +62,8 @@ manifest-aidi.json
 ```
 
 Existing assets with different names stay in the release. If you reuse the same
-`-ArchiveLabel`, assets with that same label are replaced.
+`-ArchiveLabel`, existing assets with the same file name and size are skipped,
+and same-name assets with a different size are replaced.
 
 ## Restore later
 
