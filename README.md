@@ -7,7 +7,8 @@ track the helper files in this folder, not the large payload files.
 
 ## One-time setup
 
-1. Create a private GitHub repository.
+1. Create a GitHub repository. If the repository is public, release assets are
+   public too.
 2. Push this helper repository to GitHub:
 
 ```powershell
@@ -31,12 +32,18 @@ $env:GITHUB_TOKEN = "YOUR_TOKEN"
 After you put files in `payload/`, run:
 
 ```powershell
-.\scripts\Publish-GitHubRelease.ps1 -Owner YOUR_NAME -Repo YOUR_REPO
+.\scripts\Publish-GitHubRelease.ps1 -Owner shiver1514 -Repo cxmt-releases
 ```
 
 The script creates a `.tar` archive, splits it into release-safe parts when
 needed, creates a prerelease tag like `temp-20260509-153000`, and uploads the
 archive parts plus a manifest.
+
+Public download URL pattern:
+
+```text
+https://github.com/shiver1514/cxmt-releases/releases
+```
 
 ## Restore later
 
