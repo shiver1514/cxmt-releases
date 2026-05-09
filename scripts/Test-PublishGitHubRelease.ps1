@@ -49,6 +49,7 @@ function Assert-Equal {
 
 $scriptPath = Join-Path $PSScriptRoot "Publish-GitHubRelease.ps1"
 Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Invoke-WithRetry"
+Import-ScriptFunction -ScriptPath $scriptPath -FunctionName "Get-UploadProgressPercent"
 
 $attempts = 0
 $result = Invoke-WithRetry -OperationName "flaky operation" -MaxAttempts 3 -DelaySeconds 0 -ScriptBlock {
@@ -79,5 +80,11 @@ catch {
 }
 
 Assert-Equal -Expected 2 -Actual $attempts -Message "Retry should stop after the maximum attempt count."
+
+Assert-Equal -Expected 0 -Actual (Get-UploadProgressPercent -UploadedBytes 0 -TotalBytes 0) -Message "Zero-byte totals should report 0 percent."
+Assert-Equal -Expected 0 -Actual (Get-UploadProgressPercent -UploadedBytes 0 -TotalBytes 100) -Message "No uploaded bytes should report 0 percent."
+Assert-Equal -Expected 50 -Actual (Get-UploadProgressPercent -UploadedBytes 50 -TotalBytes 100) -Message "Half uploaded should report 50 percent."
+Assert-Equal -Expected 100 -Actual (Get-UploadProgressPercent -UploadedBytes 100 -TotalBytes 100) -Message "Complete uploads should report 100 percent."
+Assert-Equal -Expected 100 -Actual (Get-UploadProgressPercent -UploadedBytes 120 -TotalBytes 100) -Message "Progress should be capped at 100 percent."
 
 Write-Host "Publish-GitHubRelease retry tests passed."

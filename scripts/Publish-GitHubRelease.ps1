@@ -63,6 +63,31 @@ function Invoke-WithRetry {
     }
 }
 
+function Get-UploadProgressPercent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int64] $UploadedBytes,
+
+        [Parameter(Mandatory = $true)]
+        [int64] $TotalBytes
+    )
+
+    if ($TotalBytes -le 0) {
+        return 0
+    }
+
+    $percent = [int] [Math]::Floor(($UploadedBytes / $TotalBytes) * 100)
+    if ($percent -lt 0) {
+        return 0
+    }
+
+    if ($percent -gt 100) {
+        return 100
+    }
+
+    return $percent
+}
+
 function Invoke-GitHubApi {
     param(
         [Parameter(Mandatory = $true)][ValidateSet("Get", "Post", "Delete")]
@@ -89,6 +114,127 @@ function Invoke-GitHubApi {
 
     Invoke-WithRetry -OperationName "$Method $Uri" -ScriptBlock {
         Invoke-RestMethod @params
+    }
+}
+
+function Set-RequestHeaders {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Net.HttpWebRequest] $Request,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Headers
+    )
+
+    foreach ($key in $Headers.Keys) {
+        $value = [string] $Headers[$key]
+        switch ($key.ToLowerInvariant()) {
+            "accept" { $Request.Accept = $value }
+            "user-agent" { $Request.UserAgent = $value }
+            default { $Request.Headers[$key] = $value }
+        }
+    }
+}
+
+function Read-WebResponseBody {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Net.WebResponse] $Response
+    )
+
+    $stream = $Response.GetResponseStream()
+    if ($null -eq $stream) {
+        return ""
+    }
+
+    $reader = [System.IO.StreamReader]::new($stream)
+    try {
+        return $reader.ReadToEnd()
+    }
+    finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Invoke-GitHubAssetUpload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Uri,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Headers,
+
+        [Parameter(Mandatory = $true)]
+        [string] $FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Activity,
+
+        [int] $ProgressId = 1
+    )
+
+    $file = Get-Item -LiteralPath $FilePath
+    $request = [System.Net.HttpWebRequest] [System.Net.WebRequest]::Create($Uri)
+    $request.Method = "POST"
+    $request.ContentType = "application/octet-stream"
+    $request.ContentLength = $file.Length
+    $request.AllowWriteStreamBuffering = $false
+    $request.SendChunked = $false
+    $request.Timeout = 60 * 60 * 1000
+    $request.ReadWriteTimeout = 60 * 60 * 1000
+    Set-RequestHeaders -Request $request -Headers $Headers
+
+    $buffer = New-Object byte[] (8MB)
+    $uploadedBytes = [int64] 0
+    $fileStream = [System.IO.File]::OpenRead($file.FullName)
+    $requestStream = $null
+
+    try {
+        $requestStream = $request.GetRequestStream()
+        while ($true) {
+            $bytesRead = $fileStream.Read($buffer, 0, $buffer.Length)
+            if ($bytesRead -le 0) {
+                break
+            }
+
+            $requestStream.Write($buffer, 0, $bytesRead)
+            $uploadedBytes += $bytesRead
+            $percent = Get-UploadProgressPercent -UploadedBytes $uploadedBytes -TotalBytes $file.Length
+            $status = "{0:N2} MiB / {1:N2} MiB ({2}%)" -f ($uploadedBytes / 1MB), ($file.Length / 1MB), $percent
+            Write-Progress -Id $ProgressId -Activity $Activity -Status $status -PercentComplete $percent
+        }
+    }
+    finally {
+        if ($null -ne $requestStream) {
+            $requestStream.Dispose()
+        }
+        $fileStream.Dispose()
+    }
+
+    try {
+        $response = $request.GetResponse()
+        try {
+            $body = Read-WebResponseBody -Response $response
+            Write-Progress -Id $ProgressId -Activity $Activity -Completed
+            if ([string]::IsNullOrWhiteSpace($body)) {
+                return $null
+            }
+
+            return $body | ConvertFrom-Json
+        }
+        finally {
+            $response.Dispose()
+        }
+    }
+    catch [System.Net.WebException] {
+        if ($_.Exception.Response) {
+            $statusCode = [int] $_.Exception.Response.StatusCode
+            $body = Read-WebResponseBody -Response $_.Exception.Response
+            throw "GitHub upload failed with HTTP $statusCode. $body"
+        }
+
+        throw
     }
 }
 
@@ -284,17 +430,21 @@ catch {
     $release = Invoke-GitHubApi -Method Post -Uri "$apiBase/releases" -Headers $headers -Body $releaseBody
 }
 
-foreach ($assetPath in $assetPaths) {
+for ($assetIndex = 0; $assetIndex -lt $assetPaths.Count; $assetIndex++) {
+    $assetPath = $assetPaths[$assetIndex]
     $asset = Get-Item -LiteralPath $assetPath
     Remove-ExistingAsset -Release $release -AssetName $asset.Name -ApiBase $apiBase -Headers $headers
 
     $escapedName = [Uri]::EscapeDataString($asset.Name)
     $uploadUri = "https://uploads.github.com/repos/$Owner/$Repo/releases/$($release.id)/assets?name=$escapedName"
 
-    Write-Host "Uploading $($asset.Name) ($([Math]::Round($asset.Length / 1MB, 2)) MiB)"
+    $assetNumber = $assetIndex + 1
+    $activity = "Uploading asset $assetNumber of $($assetPaths.Count): $($asset.Name)"
+    Write-Host "$activity ($([Math]::Round($asset.Length / 1MB, 2)) MiB)"
     Invoke-WithRetry -OperationName "Upload $($asset.Name)" -ScriptBlock {
-        Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers -ContentType "application/octet-stream" -InFile $asset.FullName
+        Invoke-GitHubAssetUpload -Uri $uploadUri -Headers $headers -FilePath $asset.FullName -Activity $activity -ProgressId 1
     } | Out-Null
+    Write-Host "Uploaded $($asset.Name)"
 }
 
 Write-Host ""
